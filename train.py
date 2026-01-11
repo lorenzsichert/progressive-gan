@@ -20,20 +20,20 @@ n_epochs = 2000
 b1 = 0.0
 b2 = 0.99
 latent_dim = 256
-features = 64
+features = 128
 init_size = 4
 img_size = 512
-layer = 1
+layer = 2
 channels = 3
-batch_size = 16
+batch_size = 32
+discriminator_batch_size = 32
 dataset_size = -1
 sample_interval = 16
 
-
-alpha_end = 2.0
+alpha_end = 20.0
 alpha_incease = 0.0001
 alpha_dropdown = 1.0
-counting_alpha = 0.0
+counting_alpha = 1.0
 
 
 # --- Dataset Loading ---
@@ -67,13 +67,12 @@ transform = transforms.Compose([
     transforms.Normalize([0.5],[0.5])
 ])
 
-ds = load_dataset(link)
-train = ds[split]
 dataset = torchvision.datasets.ImageFolder(link, transform=transform)
 dataloader = DataLoader(
     dataset,
-    batch_size=32,
-    num_workers=10
+    batch_size=discriminator_batch_size,
+    num_workers=10,
+    shuffle=True
 )
 
 
@@ -87,12 +86,12 @@ print(f"Running on {device}")
 # --- Image Blending ---
 
 def seperate_image(image, layer, alpha):
-    image_normal = nn.functional.interpolate(image, size=(pow(2, layer+2), pow(2,layer+2)), mode="bilinear")
-    image_normal_high = nn.functional.interpolate(image_normal, size=(pow(2, layer+3), pow(2,layer+3)), mode="bilinear")
-    image_high = nn.functional.interpolate(image, size=(pow(2, layer+3), pow(2,layer+3)), mode="bilinear")
+    image_normal = nn.functional.interpolate(image, size=(pow(2, layer), pow(2,layer)), mode="bilinear")
+    image_normal_high = nn.functional.interpolate(image_normal, size=(pow(2, layer+1), pow(2,layer+1)), mode="bilinear")
+    image_high = nn.functional.interpolate(image, size=(pow(2, layer+1), pow(2,layer+1)), mode="bilinear")
 
     image_blend_high = (1-alpha) * image_normal_high + alpha * image_high
-    image_blend_normal = nn.functional.interpolate(image_blend_high, size=(pow(2, layer+2), pow(2,layer+2)), mode="bilinear")
+    image_blend_normal = nn.functional.interpolate(image_blend_high, size=(pow(2, layer), pow(2,layer)), mode="bilinear")
     return image_blend_normal, image_blend_high
 
 
@@ -124,7 +123,6 @@ for ep in range(n_epochs):
 
     i = 0
     for batch in dataloader:
-        print("a")
         counting_alpha += alpha_incease
         if (counting_alpha >= alpha_end and layer <= log(img_size,2)-log(16,2)):
             counting_alpha = 0.0
@@ -150,7 +148,9 @@ for ep in range(n_epochs):
         # Train Discriminator on Real Images
         real = batch[0].to(device)
 
+
         real_normal, real_high = seperate_image(real, layer, alpha)
+
 
         output_real = discriminator(real_normal, real_high, alpha)
         loss_real = mean(nn.functional.relu(1 - output_real))
@@ -182,10 +182,9 @@ for ep in range(n_epochs):
         if i % (sample_interval/4) == 0:
             print(f"Ep: {ep}, i: {i}/{len(dataloader)}, alpha: {counting_alpha:.3f}, D(r): {mean(output_real):.3f}, D(f): {mean(output_fake):.3f}, D Loss: {(loss_real + loss_fake)/2:.3f}, G Loss:  {loss_generated:.3f}")
         if i % sample_interval == 0:
-            save_image(output, f"image-{ep}.png", normalize=True)
+            save_image(output, f"images/image-{ep}.png", normalize=True)
         if i % (sample_interval * 16) == 0:
             torch.save(generator.state_dict(), f"ckpt/G-{layer}-a{counting_alpha:.3f}.pth")
             torch.save(discriminator.state_dict(), f"ckpt/D-{layer}-a{counting_alpha:.3f}.pth")
 
-        print("b")
 
