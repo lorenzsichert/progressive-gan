@@ -1,4 +1,5 @@
 from math import log
+from os import wait
 from torch import mean, optim
 import torch
 import torch.nn as nn
@@ -13,31 +14,32 @@ from models import Generator
 from models import Discriminator
 
 # Use as many threads as possible
-torch.set_num_threads(10)
-torch.set_num_interop_threads(10)
+torch.set_num_threads(20)
+torch.set_num_interop_threads(20)
 
 n_epochs = 2000
-b1 = 0.0
+b1 = 0.5
 b2 = 0.99
+lr = 0.0001
 latent_dim = 256
 features = 128
-init_size = 4
+init_size = 16
 img_size = 512
-layer = 2
+layer = 1
 channels = 3
 batch_size = 32
 discriminator_batch_size = 32
 dataset_size = -1
 sample_interval = 16
 
-alpha_end = 20.0
+alpha_end = 2.0
 alpha_incease = 0.0001
 alpha_dropdown = 1.0
-counting_alpha = 1.0
+counting_alpha = 0.0
 
 
 # --- Dataset Loading ---
-link = "yfszzx"
+link = "iamkaikai"
 split = "train"
 image_tag = "image"
 
@@ -109,8 +111,8 @@ generator.to(device)
 discriminator.to(device)
 
 
-optimizerG = optim.Adam(generator.parameters(), lr=0.001, betas=(b1, b2))
-optimizerD = optim.Adam(discriminator.parameters(), lr=0.001, betas=(b1, b2))
+optimizerG = optim.Adam(generator.parameters(), lr=lr, betas=(b1, b2))
+optimizerD = optim.Adam(discriminator.parameters(), lr=lr, betas=(b1, b2))
 
 
 alpha = 1.0
@@ -139,8 +141,8 @@ for ep in range(n_epochs):
             generator.to(device)
             discriminator.to(device)
 
-            optimizerG = optim.Adam(generator.parameters(), lr=0.001, betas=(b1, b2))
-            optimizerD = optim.Adam(discriminator.parameters(), lr=0.001, betas=(b1, b2))
+            optimizerG = optim.Adam(generator.parameters(), lr=lr, betas=(b1, b2))
+            optimizerD = optim.Adam(discriminator.parameters(), lr=lr, betas=(b1, b2))
         alpha = min(max(0.0,counting_alpha),1.0)
         i += 1
         discriminator.zero_grad()
@@ -149,10 +151,10 @@ for ep in range(n_epochs):
         real = batch[0].to(device)
 
 
-        real_normal, real_high = seperate_image(real, layer, alpha)
-
+        real_normal, real_high = seperate_image(real, layer+2, alpha)
 
         output_real = discriminator(real_normal, real_high, alpha)
+
         loss_real = mean(nn.functional.relu(1 - output_real))
         loss_real.backward()
 
@@ -160,7 +162,7 @@ for ep in range(n_epochs):
         # Train Discriminator on Fake Images
         noise = torch.randn(batch_size, latent_dim, 1, 1).to(device)
         fake = generator(noise, alpha)
-        fake_normal, fake_high = seperate_image(fake, layer, alpha)
+        fake_normal, fake_high = seperate_image(fake, layer+2, alpha)
         output_fake = discriminator(fake_normal, fake_high, alpha) 
         loss_fake = mean(nn.functional.relu(1 + output_fake))
         loss_fake.backward()
@@ -171,7 +173,7 @@ for ep in range(n_epochs):
         generator.zero_grad()
         noise = torch.randn(batch_size, latent_dim, 1, 1).to(device)
         output = generator(noise, alpha)
-        output_normal, output_high = seperate_image(output, layer, alpha)
+        output_normal, output_high = seperate_image(output, layer+2, alpha)
         output_fake = discriminator(output_normal, output_high, alpha) 
         loss_generated = -mean(output_fake)
         loss_generated.backward()
