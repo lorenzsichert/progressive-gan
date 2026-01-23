@@ -1,5 +1,5 @@
 import os
-from datasets import load_dataset
+from datasets import load_dataset, tqdm
 from torch.utils.data import Dataset
 from torchvision import transforms
 import argparse
@@ -48,14 +48,14 @@ transform = transforms.Compose([
     transforms.Normalize([0.5],[0.5])
 ])
 
-ds = load_dataset(link)
-train = ds[split]
-dataset = DatasetTransform(train, transform)
+ds = load_dataset(link, split=split)
+dataset = DatasetTransform(ds, transform)
 
 if not os.path.exists(link):
     os.makedirs(link)
 
-for i in range(len(dataset)):
-    img = train[i][column]
+for i in tqdm(range(len(dataset))):
+    img = ds[i][column]
     img.save(link + f"/image{i}.png")
+
 

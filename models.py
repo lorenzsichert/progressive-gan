@@ -1,125 +1,150 @@
 import torch.nn as nn
-from numpy import log2
+import torch
+from torch.nn.functional import interpolate
+from torch.nn.utils import spectral_norm
+
+
+
+class InitLayer(nn.Module):
+    def __init__(self, nz, channel):
+        super().__init__()
+
+        self.init = nn.Sequential(
+                        spectral_norm(nn.ConvTranspose2d(nz, channel*2, 4, 1, 0, bias=False)),
+                        nn.BatchNorm2d(channel*2), GLU() )
+
+    def forward(self, noise):
+        noise = noise.view(noise.shape[0], -1, 1, 1)
+        return self.init(noise)
+class GLU(nn.Module):
+    def forward(self, x):
+        nc = x.size(1)
+        assert nc % 2 == 0, 'channels dont divide 2!'
+        nc = int(nc/2)
+        return x[:, :nc] * torch.sigmoid(x[:, nc:])
+
+def UpBlock(in_planes, out_planes):
+    block = nn.Sequential(
+        nn.Upsample(scale_factor=2, mode='nearest'),
+        nn.utils.spectral_norm(nn.Conv2d(in_planes, out_planes*2, 3, 1, 1, bias=False)),
+        #convTranspose2d(in_planes, out_planes*2, 4, 2, 1, bias=False),
+        nn.BatchNorm2d(out_planes*2), GLU())
+    return block
 
 class Generator(nn.Module):
-    def __init__(self, init_size, latent_dim, img_size, features, channels, layer):
-        super(Generator, self).__init__()
-        self.init_size = init_size
-        self.features = features
-        self.channels = channels
+    def __init__(self, nz, ngf, nc, img_size, layer):
+        super().__init__()
+
+        self.img_size = img_size
         self.layer = layer
+        self.nc = nc
 
-        self.upscales = log2(img_size/self.init_size)
-        
+        nfc_multi = {4:16, 8:8, 16:4, 32:2, 64:2, 128:1, 256:0.5, 512:0.25, 1024:0.125}
+        self.nfc = {}
+        for k, v in nfc_multi.items():
+            self.nfc[k] = int(v*ngf)
 
+        self.init = InitLayer(nz, self.nfc[4])
+        self.features = []
+        for i in self.nfc:
+            if i < layer:
+                self.features.append(UpBlock(self.nfc[i], self.nfc[i*2]))
+            else:
+                break
 
-        self.network = nn.Sequential(
-            nn.ConvTranspose2d(latent_dim, self.init_size * features, kernel_size=4, stride=1, padding=0),
-            nn.BatchNorm2d(self.init_size * features // 1),
-            nn.ReLU(inplace=True)
+        self.to_big_low = nn.Sequential(
+            spectral_norm(nn.Conv2d(self.nfc[layer // 2], self.nc, 3, 1, 1, bias=False))
+        )
+        self.to_big_high = nn.Sequential(
+            spectral_norm(nn.Conv2d(self.nfc[layer], self.nc, 3, 1, 1, bias=False))
         )
 
+        print(len(self.features))
 
-        self.normal_res_head = nn.Sequential(
-            nn.ConvTranspose2d(self.init_size * features // pow(2, 0), self.channels, kernel_size=4, stride=2, padding=1)
+    def add_layer(self):
+        self.features.append(UpBlock(self.nfc[self.layer], self.nfc[self.layer*2]))
+        self.to_big_low = self.to_big_high
+        self.to_big_high = nn.Sequential(
+            spectral_norm(nn.Conv2d(self.nfc[self.layer], self.nc, 3, 1, 1, bias=False))
         )
-
-        self.high_res_block = nn.Sequential(
-            nn.ConvTranspose2d(self.init_size * features // pow(2, 0), self.init_size * features // pow(2, 1), kernel_size=4, stride=2, padding=1),
-            nn.BatchNorm2d(self.init_size * features // pow(2, 1)),
-            nn.ReLU(inplace=True)
-        )
-
-        self.high_res_head = nn.Sequential(
-            nn.ConvTranspose2d(self.init_size * features // pow(2, 1), self.channels, kernel_size=4, stride=2, padding=1)
-        )
-
-        for i in range(2,layer+1):
-            self.add_layer(i)
 
 
     def forward(self, input, alpha):
-        out = self.network(input)
-        image_normal = self.normal_res_head(out)
-        out_high = self.high_res_block(out)
-        image_high = self.high_res_head(out_high)
+        feature = self.init(input)
+        for i in range(len(self.features)-1):
+            feature = self.features[i](feature)
 
-        image_normal_high = nn.functional.interpolate(image_normal, size=image_high.size()[-2:],mode="bilinear", align_corners=False)
-        image = (1-alpha) * image_normal_high + alpha * image_high
+        big_low = interpolate(self.to_big_low(feature), (self.layer,self.layer))
+        big_high = self.to_big_high(self.features[len(self.features)-1](feature))
 
-        return image
+        return (1-alpha) * big_low + alpha * big_high
 
-    def add_layer(self, layer):
-        self.layer = layer
-        self.network.extend(self.high_res_block)
-        self.normal_res_head = self.high_res_head
-        self.high_res_block = nn.Sequential(
-            nn.ConvTranspose2d(self.init_size * self.features // pow(2, self.layer-1), self.init_size * self.features // pow(2, self.layer), kernel_size=4, stride=2, padding=1),
-            nn.BatchNorm2d(self.init_size * self.features // pow(2, self.layer)),
-            nn.ReLU(inplace=True)
-        )
-        self.high_res_head = nn.Sequential(
-            nn.ConvTranspose2d(self.init_size * self.features // pow(2, self.layer), self.channels, kernel_size=4, stride=2, padding=1)
-        )
 
-    def export_generative(self):
-        final = self.network
-        final.extend(self.high_res_block)
-        final.extend(self.high_res_head)
 
-        return final
+
+
+
+def downBlockHead(in_planes, out_planes):
+    return nn.Sequential(
+        spectral_norm(nn.Conv2d(in_planes, out_planes, 4, 2, 1, bias=False)),
+        nn.LeakyReLU(0.2, inplace=True)
+    )
+
+def downBlock(in_planes, out_planes):
+    return nn.Sequential(
+        spectral_norm(nn.Conv2d(in_planes, out_planes, 4, 2, 1, bias=False)),
+        nn.BatchNorm2d(out_planes), nn.LeakyReLU(0.2, inplace=True),
+        spectral_norm(nn.Conv2d(out_planes, out_planes, 3, 1, 1, bias=False)),
+        nn.BatchNorm2d(out_planes), nn.LeakyReLU(0.2, inplace=True)
+    )
+
 
 class Discriminator(nn.Module):
-    def __init__(self, init_size, img_size, features, channels, layer):
-        super(Discriminator, self).__init__()
-        self.init_size = init_size
-        self.features = features
-        self.channels = channels
+    def __init__(self, ndf, nc, img_size, layer):
+        super().__init__()
+        
+        self.img_size = img_size
         self.layer = layer
+        self.nc = nc
 
-        self.downscales = log2(img_size/self.init_size)
+        nfc_multi = {4:16, 8:8, 16:4, 32:2, 64:2, 128:1, 256:0.5, 512:0.25, 1024:0.125}
+        self.nfc = {}
+        for k, v in nfc_multi.items():
+            self.nfc[k] = int(v*ndf)
+
+        self.rf = nn.Sequential(spectral_norm(nn.Conv2d(self.nfc[4], 1, 2, 1, 0)))
+        self.features = []
+
+        for i in self.nfc:
+            if i < layer:
+                self.features.append(downBlock(self.nfc[i*2], self.nfc[i]))
+            else:
+                break
+
+        print(self.features)
+
+        self.down_from_big_high = downBlockHead(3, self.nfc[self.layer])
+
+        self.down_from_big_low = downBlockHead(3, self.nfc[self.layer // 2])
 
 
+    def add_layer(self):
+        self.features.append(downBlock(self.nfc[self.layer], self.nfc[self.layer // 2]))
+        self.down_from_big_low = self.down_from_big_high
+        self.down_from_big_high = downBlockHead(3, self.nfc[self.layer // 2])
 
-        self.network = nn.Sequential(
-            nn.utils.spectral_norm(nn.Conv2d(self.init_size * self.features // pow(2, 0), 1, kernel_size=4, stride=1, padding=0)),
-            nn.LeakyReLU(0.2, True),
-        )
 
-        self.head_normal = nn.Sequential(
-            nn.utils.spectral_norm(nn.Conv2d(self.channels, self.init_size * self.features // pow(2, 0), kernel_size=4, stride=2, padding=1)),
-            nn.LeakyReLU(0.2, True),
-        )
+    def forward(self, input, alpha):
+        feature_high = self.down_from_big_high(input)
+        feature_high_low = self.features[len(self.features)-1](feature_high)
 
-        self.head_high = nn.Sequential(
-            nn.utils.spectral_norm(nn.Conv2d(self.channels, self.init_size * self.features // pow(2, 1), kernel_size=4, stride=2, padding=1)),
-            nn.LeakyReLU(0.2, True)
-        )
-        self.body_high = nn.Sequential(
-            nn.utils.spectral_norm(nn.Conv2d(self.init_size * self.features // pow(2, 1), self.init_size * self.features // pow(2, 0), kernel_size=4, stride=2, padding=1)),
-            nn.LeakyReLU(0.2, True),
-        )
-        for i in range(2,layer+1):
-            self.add_layer(i)
+        input_low = interpolate(input, (self.layer // 2, self.layer // 2))
+        feature_low = self.down_from_big_low(input_low)
 
-    
-    def forward(self, input_normal, input_high, alpha):
-        pass_high = self.body_high(self.head_high(input_high)) # Downscale once
-        pass_normal = self.head_normal(input_normal)
-        input = (1 - alpha) * pass_normal + alpha * pass_high
+        feature = (1-alpha) * feature_low + alpha * feature_high_low
 
-        return self.network(input)
+        for i in reversed(range(len(self.features)-1)):
+            feature = self.features[i](feature)
 
-    def add_layer(self, layer):
-        self.layer = layer
-        self.network.insert(0, self.body_high)
-        self.head_normal = self.head_high
+        return self.rf(feature)
 
-        self.head_high = nn.Sequential(
-            nn.utils.spectral_norm(nn.Conv2d(self.channels, self.init_size * self.features // pow(2, self.layer), kernel_size=4, stride=2, padding=1)),
-            nn.LeakyReLU(0.2, True)
-        )
-        self.body_high = nn.Sequential(
-            nn.utils.spectral_norm(nn.Conv2d(self.init_size * self.features // pow(2, self.layer), self.init_size * self.features // pow(2, self.layer-1), kernel_size=4, stride=2, padding=1)),
-            nn.LeakyReLU(0.2, True),
-        )
