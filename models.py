@@ -64,9 +64,11 @@ class Generator(nn.Module):
     def add_layer(self):
         self.features.append(UpBlock(self.nfc[self.layer], self.nfc[self.layer*2]))
         self.to_big_low = self.to_big_high
+        self.layer *= 2
         self.to_big_high = nn.Sequential(
             spectral_norm(nn.Conv2d(self.nfc[self.layer], self.nc, 3, 1, 1, bias=False))
         )
+
 
 
     def forward(self, input, alpha):
@@ -129,9 +131,13 @@ class Discriminator(nn.Module):
 
 
     def add_layer(self):
-        self.features.append(downBlock(self.nfc[self.layer], self.nfc[self.layer // 2]))
+        self.features.append(downBlock(self.nfc[self.layer * 2], self.nfc[self.layer]))
+
+
         self.down_from_big_low = self.down_from_big_high
-        self.down_from_big_high = downBlockHead(3, self.nfc[self.layer // 2])
+        self.down_from_big_high = downBlockHead(3, self.nfc[self.layer * 2])
+        self.layer *= 2
+
 
 
     def forward(self, input, alpha):
@@ -140,6 +146,7 @@ class Discriminator(nn.Module):
 
         input_low = interpolate(input, (self.layer // 2, self.layer // 2))
         feature_low = self.down_from_big_low(input_low)
+
 
         feature = (1-alpha) * feature_low + alpha * feature_high_low
 

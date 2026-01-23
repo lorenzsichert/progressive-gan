@@ -23,14 +23,14 @@ latent_dim = 256
 features = 8
 init_size = 4
 img_size = 512
-layer = 128
+layer = 8
 channels = 3
 batch_size = 16
 discriminator_batch_size = batch_size
 sample_interval = 16
 
 alpha_end = 2.0
-alpha_incease = 0.0001
+alpha_incease = 0.1
 alpha_dropdown = 1.0
 counting_alpha = 0.0
 
@@ -123,17 +123,15 @@ for ep in range(n_epochs):
     i = 0
     for batch in dataloader:
         counting_alpha += alpha_incease
-        if (counting_alpha >= alpha_end and layer <= log(img_size,2)-log(16,2)):
+        if (counting_alpha >= alpha_end and layer < img_size):
             counting_alpha = 0.0
             alpha_incease *= alpha_dropdown
             torch.save(generator.state_dict(), f"G-{layer}.pth")
             torch.save(discriminator.state_dict(), f"D-{layer}.pth")
-            layer += 1
+            print("layer")
+            layer *= 2
             generator.add_layer()
             discriminator.add_layer()
-
-            torch.save(generator.state_dict(), f"G-{layer}.pth")
-            torch.save(discriminator.state_dict(), f"D-{layer}.pth")
 
             generator.to(device)
             discriminator.to(device)
