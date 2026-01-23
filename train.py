@@ -23,20 +23,22 @@ latent_dim = 256
 features = 8
 init_size = 4
 img_size = 512
-layer = 8
+layer = 256
 channels = 3
 batch_size = 16
 discriminator_batch_size = batch_size
 sample_interval = 16
 
 alpha_end = 2.0
-alpha_incease = 0.1
+alpha_incease = 0.0001
 alpha_dropdown = 1.0
 counting_alpha = 0.0
 
+load_ckpt = False
+
 
 # --- Dataset Loading ---
-link = "../progressive-gan/iamkaikai"
+link = "../progressive-gan/iamkaikai/"
 split = "train"
 image_tag = "image"
 
@@ -97,11 +99,12 @@ def seperate_image(image, layer, alpha):
 generator = Generator(nz=latent_dim, ngf=features, img_size=img_size, nc=channels, layer=layer)
 discriminator = Discriminator(ndf=features, nc=channels, img_size=img_size, layer=layer)
 
-try:
-    generator.load_state_dict(torch.load(f"G-{layer}-a1.405.pth"))
-    discriminator.load_state_dict(torch.load(f"D-{layer}-a1.405.pth"))
-except:
-    print("Models could not be loaded!")
+if load_ckpt:
+    try:
+        generator.load_state_dict(torch.load(f"G-{layer}-a1.405.pth"))
+        discriminator.load_state_dict(torch.load(f"D-{layer}-a1.405.pth"))
+    except:
+        print("Models could not be loaded!")
 
 
 generator.to(device)
@@ -183,6 +186,3 @@ for ep in range(n_epochs):
         if i % (sample_interval * 16) == 0:
             torch.save(generator.state_dict(), f"ckpt/G-{layer}-a{counting_alpha:.3f}.pth")
             torch.save(discriminator.state_dict(), f"ckpt/D-{layer}-a{counting_alpha:.3f}.pth")
-
-    break
-

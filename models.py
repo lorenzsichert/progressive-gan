@@ -45,7 +45,7 @@ class Generator(nn.Module):
             self.nfc[k] = int(v*ngf)
 
         self.init = InitLayer(nz, self.nfc[4])
-        self.features = []
+        self.features = nn.ModuleList()
         for i in self.nfc:
             if i < layer:
                 self.features.append(UpBlock(self.nfc[i], self.nfc[i*2]))
@@ -115,7 +115,7 @@ class Discriminator(nn.Module):
             self.nfc[k] = int(v*ndf)
 
         self.rf = nn.Sequential(spectral_norm(nn.Conv2d(self.nfc[4], 1, 2, 1, 0)))
-        self.features = []
+        self.features = nn.ModuleList()
 
         for i in self.nfc:
             if i < layer:
@@ -123,7 +123,6 @@ class Discriminator(nn.Module):
             else:
                 break
 
-        print(self.features)
 
         self.down_from_big_high = downBlockHead(3, self.nfc[self.layer])
 
